@@ -4,7 +4,7 @@
 BASE_DATA_DIR = "../data"
 
 # --- 区域设置 ---
-REGION_TRAIN = "LA"
+REGION_TRAIN = "NY"
 REGION_TEST = "NY"
 YEAR = "2020"
 

@@ -7,28 +7,33 @@ import math
 import torch.nn as nn
 from modules import *
 import logging
+logging.getLogger('PIL').setLevel(logging.WARNING)
 
 from dataset import ImageAugDataset
 
 import matplotlib.pyplot as plt
 import numpy as np
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+import config
+
 parser = argparse.ArgumentParser()
-parser.add_argument('--data_path', type=str, default='../data/M1/l8_2020') 
+parser.add_argument('--data_path', type=str, default='../data/MIX_IMG') 
 parser.add_argument('--bands', type=int, default=3)
 parser.add_argument('--lr', type=float, default=1e-3)
-parser.add_argument('--batch_size', type=int, default=128)
+parser.add_argument('--batch_size', type=int, default=24)   #128
 parser.add_argument('--projection_dim', type=int, default=128)
 parser.add_argument('--resnet', type=str, default='resnet50')
 parser.add_argument('--temperature', type=float, default=0.5)
 parser.add_argument('--world_size', type=int, default=1)
 parser.add_argument('--total_epoch', type=int, default=120)
-parser.add_argument('--model_path', type=str, default='./ckpt')
+parser.add_argument('--output_path', type=str, default=f'./ckpt/img_encoder_mix_{config.YEAR}.pth')
 parser.add_argument('--schedule', default=[90, 110], nargs='*', type=int,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--cos', type=bool, default=False)
-parser.add_argument('--log', type=str, default='log/M1bands3-l8.log')
-
+parser.add_argument('--log', type=str, default=f'./log/img_encoder_mix_{config.YEAR}.log')
+parser.add_argument('--loss', type=str, default=f'./log/loss_mix_{config.YEAR}.jpg')
 
 def adjust_learning_rate(optimizer, epoch, args):
     lr = args.lr
@@ -42,12 +47,10 @@ def adjust_learning_rate(optimizer, epoch, args):
         param_group['lr'] = lr
     return optimizer
 
-
 if __name__ == '__main__':
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Setup logging
     logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
@@ -55,24 +58,19 @@ if __name__ == '__main__':
     logger = logging.getLogger('ImageEncoder')
     logger.setLevel(logging.DEBUG)
 
-    # dataset
     train_dataset = ImageAugDataset(path=args.data_path)
     
-    train_loader = torch_geometric.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
+    train_loader = torch_geometric.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True,
                                                    num_workers=6)
 
-    # image encoder
     encoder = torchvision.models.vit_l_16(pretrained=False, num_classes=args.projection_dim)
     dim_mlp = encoder.heads[-1].weight.shape[1]
     img_encoder = ImageEncoder(encoder, args.projection_dim, dim_mlp).to(device)
 
-    img_encoder = nn.DataParallel(img_encoder)
     img_encoder.train()
 
-    # optimizer
     img_optimizer = torch.optim.Adam(img_encoder.parameters(), lr=args.lr)
 
-    # loss
     criterion = NT_Xent(args.batch_size, args.temperature, args.world_size)
 
     prefix = args.log.strip('log/').strip('.log')
@@ -88,36 +86,43 @@ if __name__ == '__main__':
     logger.info(f"Total epochs: {args.total_epoch}")
     logger.info("-----------------------------------------")
 
+    accumulation_steps = 5
+
     for epoch in range(1, args.total_epoch + 1):
         img_optimizer = adjust_learning_rate(img_optimizer, epoch, args)
         epoch_loss = 0
-        
-        for step, data in enumerate(train_loader):
-            img_optimizer.zero_grad()
-            
-            img1, img2 = data[0], data[1]
+        img_optimizer.zero_grad()
 
-            img1 = img1.to(device)
-            img2 = img2.to(device)
+        for step, data in enumerate(train_loader):
+
+            img1, img2 = data[0].to(device, non_blocking=True), data[1].to(device, non_blocking=True)
 
             h_img1, h_img2, z_img1, z_img2 = img_encoder(img1, img2)
-
+            
             loss = criterion(z_img1, z_img2)
-            epoch_loss += loss.item()
+            loss_accumulated = loss / accumulation_steps
 
-            loss.backward()
-            img_optimizer.step()
+            loss_accumulated.backward()
+
+            if (step + 1) % accumulation_steps == 0 or (step + 1) == len(train_loader):
+                
+                torch.nn.utils.clip_grad_norm_(img_encoder.parameters(), max_norm=1.0)
+                
+                img_optimizer.step()
+                img_optimizer.zero_grad()
+
+            if not torch.isnan(loss):
+                epoch_loss += loss.item()
 
             if step % 10 == 0:
-                logger.debug(f'Epoch: {epoch:03d} | Step: {step:03d} | Loss: {loss.item():.4f}')
+                logger.debug(f'Epoch: {epoch:03d} | Step: {step:03d} | Loss: {loss.item():.6f}')
 
         avg_epoch_loss = epoch_loss / len(train_loader)
         epoch_losses.append(avg_epoch_loss)
-        logger.info(f'Epoch: {epoch:03d} | Average Loss: {avg_epoch_loss:.4f}')
+        logger.info(f'Epoch: {epoch:03d} | Average Loss: {avg_epoch_loss:.6f}')
 
-    out_pth = os.path.join(args.model_path, "{}_img_{}.pth".format(prefix, args.total_epoch))
-    torch.save(img_encoder.state_dict(), out_pth)
-    logger.info(f"Model saved to {out_pth}")
+    torch.save(img_encoder.state_dict(), args.output_path)
+    logger.info(f"Model saved to {args.output_path}")
     
     plt.figure()                   
     plt.plot(epoch_losses,'b',label = 'loss', linewidth=0.5)       
@@ -125,5 +130,5 @@ if __name__ == '__main__':
     plt.xlabel('epoch')
     plt.xticks(ticks=np.arange(0, len(train_loader)*args.total_epoch, step=len(train_loader)*20), labels=np.arange(0, args.total_epoch, step=20))
     plt.legend()        
-    plt.savefig(os.path.join('./log',"{}_loss.jpg".format(prefix)))
-    logger.info(f"Loss plot saved to {os.path.join('./log', prefix + '_loss.jpg')}")
+    plt.savefig(args.loss)
+    logger.info(f"Loss plot saved to {args.loss}")

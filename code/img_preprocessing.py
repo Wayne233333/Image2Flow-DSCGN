@@ -5,11 +5,11 @@ import argparse
 import config
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--input_tif_path', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION_TRAIN, config.REGION_TRAIN + "_" + config.YEAR + "_WGS84.tif"))
+parser.add_argument('--input_tif_path', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION, config.REGION + "_" + config.YEAR + "_WGS84.tif"))
 parser.add_argument('--output_tif_dir', type=str, default=config.BASE_DATA_DIR)
-parser.add_argument('--region', type=str, default=config.REGION_TRAIN) 
+parser.add_argument('--region', type=str, default=config.REGION) 
 parser.add_argument('--year', type=str, default=config.YEAR)
-parser.add_argument('--shp_path', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION_TRAIN, "shapefile", f"tl_{config.YEAR}_{config.REGION_TRAIN}_tract.shp"))
+parser.add_argument('--shp_path', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION, "shapefile", f"tl_{config.YEAR}_{config.REGION}_tract.shp"))
 
 if __name__ == '__main__':
     args = parser.parse_args()

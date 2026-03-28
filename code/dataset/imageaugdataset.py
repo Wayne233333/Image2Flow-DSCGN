@@ -30,8 +30,8 @@ class ImageAugDataset(Dataset):
         RandomHorizontalFlip = transforms.RandomHorizontalFlip()
         toTensor = transforms.ToTensor()
         normalize = transforms.Normalize(
-                                        mean=[0.1614, 0.1647, 0.1133], # l8 b3
-                                        std=[0.1219, 0.0974, 0.0817] # l8 b3
+                                        mean=[0.1614, 0.1647, 0.1133],
+                                        std=[0.1219, 0.0974, 0.0817]
                                          )
 
         img = RandomResizeCrop(img)

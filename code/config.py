@@ -4,8 +4,7 @@
 BASE_DATA_DIR = "../data"
 
 # --- 区域设置 ---
-REGION_TRAIN = "NY"
-REGION_TEST = "NY"
+REGION = "NY"
 YEAR = "2020"
 
 # --- 划分参数 ---
@@ -15,7 +14,7 @@ RANDOM_SEED = 42
 # --- 自动推导路径 (通常不需要修改) ---
 import os
 CENSUS_DIR = os.path.join(BASE_DATA_DIR, f"CCensusTract{YEAR}")
-NID_DIR = os.path.join(BASE_DATA_DIR, f"Nid/{REGION_TRAIN}")
+NID_DIR = os.path.join(BASE_DATA_DIR, f"Nid/{REGION}")
 LODES_DIR = os.path.join(BASE_DATA_DIR, "LODES")
 
 def ensure_dirs():

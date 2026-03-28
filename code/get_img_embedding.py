@@ -16,17 +16,19 @@ import pickle
 import pandas as pd
 from collections import OrderedDict
 import logging
+logging.getLogger('PIL').setLevel(logging.WARNING)
+import config
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--data_path', type=str, default='../data/M1/l8_2020')
+parser.add_argument('--data_path', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION, config.YEAR))
 parser.add_argument('--bands', type=int, default=0)
 parser.add_argument('--projection_dim', type=int, default=128)
 parser.add_argument('--model_path', type=str, default='./ckpt')
-parser.add_argument('--log', type=str, default='log/M1bands3-l8.log')
-parser.add_argument('--output_path', type=str) # ../data/Vis/train_on_M1bands3/M1bands3_M1_s2.csv'
-parser.add_argument('--ckpt', type=str, default="M1bands3-l8_img_120.pth")
+parser.add_argument('--log', type=str, default=f'./log/get_embedding_{config.REGION}_{config.YEAR}.log')
+parser.add_argument('--output_path', type=str, default=os.path.join(config.BASE_DATA_DIR, "Vis", f"train_on_{config.REGION}_{config.YEAR}.csv"))
+parser.add_argument('--ckpt', type=str, default=f'img_encoder_mix_{config.YEAR}.pth')
 
 
 if __name__ == '__main__':
@@ -61,12 +63,23 @@ if __name__ == '__main__':
         img_encoder = ImageEncoder(encoder, args.projection_dim, dim_mlp).to(device)
  
         state_dict = torch.load(model_fp, map_location=device)
- 
         new_state_dict = OrderedDict()
+
         for k, v in state_dict.items():
-            name = k[7:] # remove 'module'
+            if k.startswith('.'):
+                if "projector" in k:
+                    name = k[1:]
+                else:
+                    name = "encoder" + k
+            elif k.startswith('module.'):
+                name = k[7:]
+            else:
+                name = k
+
             new_state_dict[name] = v
-        img_encoder.load_state_dict(new_state_dict)
+
+        msg = img_encoder.load_state_dict(new_state_dict, strict=True)
+        print(f"Successfully loaded checkpoint from {model_fp}: {msg}")
 
         img_encoder = img_encoder.to(device)
 
@@ -87,16 +100,18 @@ if __name__ == '__main__':
                 img_input = Image.open(os.path.join(args.data_path,img_file))
 
             ID = img_file.split("_")[-1].replace('.tif', '')
-            
+
+            resize = transforms.Resize((224, 224))
             toTensor = transforms.ToTensor()
             normalize = transforms.Normalize(
-                                            mean = [0.6247, 0.4714, 0.3403], # M1 l8
+                                            mean = [0.6247, 0.4714, 0.3403],
                                             std = [0.1945, 0.1398, 0.1141]
                                         )
+            img_input = resize(img_input)
             img_input = toTensor(img_input)
             img_input = normalize(img_input)
             img_input = img_input.unsqueeze(0).to(device)
-            output = img_encoder.module.encoder(img_input)
+            output = img_encoder.encoder(img_input)
             feat = list(output.cpu().detach().numpy().flatten().astype(float))
             dict[ID] = feat
             
@@ -104,6 +119,3 @@ if __name__ == '__main__':
         node_feats.index.name = 'geocode'
         node_feats.to_csv(args.output_path)
         logger.info(f"Embeddings saved to {args.output_path}")
-
-    
-    

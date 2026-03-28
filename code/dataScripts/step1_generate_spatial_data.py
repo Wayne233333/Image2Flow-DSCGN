@@ -2,7 +2,7 @@
 import pandas as pd
 import geopandas as gpd
 from scipy.spatial import distance_matrix
-import config
+import code.config as config
 import os
 
 def format_geocode(code):

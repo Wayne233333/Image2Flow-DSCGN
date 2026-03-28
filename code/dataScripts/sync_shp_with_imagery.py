@@ -1,6 +1,6 @@
 import os
 import geopandas as gpd
-import config # 引用之前定义的配置文件
+import code.config as config # 引用之前定义的配置文件
 
 def sync_shp_to_tiles():
     # --- 配置路径 ---

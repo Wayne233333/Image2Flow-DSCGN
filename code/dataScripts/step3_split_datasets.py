@@ -1,7 +1,7 @@
 # step3_split_datasets.py
 import pandas as pd
 from sklearn.model_selection import train_test_split
-import config
+import code.config as config
 import os
 
 def run():

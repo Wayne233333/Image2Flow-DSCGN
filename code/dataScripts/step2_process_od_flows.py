@@ -3,7 +3,7 @@ import geopandas as gpd
 import os
 import glob
 from shapely.geometry import Point
-import config
+import code.config as config
 
 def process_od_data_with_distance(od_folder, shp_path, output_path):
     # 1. 读取 SHP 文件

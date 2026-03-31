@@ -3,7 +3,7 @@ import pandas as pd
 import geopandas as gpd
 from scipy.spatial import distance_matrix
 import sys
-sys.path.append('../code')
+sys.path.append('..')
 import config as config
 import os
 

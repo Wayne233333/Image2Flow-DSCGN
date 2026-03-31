@@ -18,18 +18,18 @@ from collections import OrderedDict
 import logging
 logging.getLogger('PIL').setLevel(logging.WARNING)
 import sys
-sys.path.append('../code')
+sys.path.append('..')
 import config as config
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--data_path', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION, config.YEAR))
+parser.add_argument('--data_path', type=str, default=os.path.join(config.DATA_DIR, config.REGION, config.YEAR))
 parser.add_argument('--bands', type=int, default=0)
 parser.add_argument('--projection_dim', type=int, default=128)
 parser.add_argument('--model_path', type=str, default='./ckpt')
 parser.add_argument('--log', type=str, default=f'./log/get_embedding_{config.REGION}_{config.YEAR}.log')
-parser.add_argument('--output_path', type=str, default=os.path.join(config.BASE_DATA_DIR, "Vis", f"train_on_{config.REGION}_{config.YEAR}.csv"))
+parser.add_argument('--output_path', type=str, default=os.path.join(config.DATA_DIR, "Vis", f"train_on_{config.REGION}_{config.YEAR}.csv"))
 parser.add_argument('--ckpt', type=str, default=f'img_encoder_mix_{config.YEAR}.pth')
 
 

@@ -1,7 +1,8 @@
 # config.py
+import os
 
 # --- 输出根目录 ---
-BASE_DATA_DIR = "../data"
+DATA_DIR = os.path.join("..", "..", "data")
 
 # --- 区域设置 ---
 REGION = "NY"
@@ -12,10 +13,9 @@ SPLIT_RATIO = {"train": 0.8, "val": 0.1, "test": 0.1}
 RANDOM_SEED = 42
 
 # --- 自动推导路径 (通常不需要修改) ---
-import os
-CENSUS_DIR = os.path.join(BASE_DATA_DIR, f"CCensusTract{YEAR}")
-NID_DIR = os.path.join(BASE_DATA_DIR, f"Nid/{REGION}")
-LODES_DIR = os.path.join(BASE_DATA_DIR, "LODES")
+CENSUS_DIR = os.path.join(DATA_DIR, f"CCensusTract{YEAR}")
+NID_DIR = os.path.join(DATA_DIR, f"Nid/{REGION}")
+LODES_DIR = os.path.join(DATA_DIR, "LODES")
 
 def ensure_dirs():
     for p in [CENSUS_DIR, NID_DIR, LODES_DIR]:

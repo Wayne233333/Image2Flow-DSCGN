@@ -4,7 +4,7 @@ import os
 import glob
 from shapely.geometry import Point
 import sys
-sys.path.append('../code')
+sys.path.append('..')
 import config as config
 
 def process_od_data_with_distance(od_folder, shp_path, output_path):

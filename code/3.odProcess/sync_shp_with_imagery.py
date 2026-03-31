@@ -1,13 +1,13 @@
 import os
 import geopandas as gpd
 import sys
-sys.path.append('../code')
+sys.path.append('..')
 import config as config
 
 def sync_shp_to_tiles():
     # --- 配置路径 ---
     # 卫星影像存放目录 (例如 NY/s2_2020/)
-    tile_dir = f"./data/{config.REGION_NAME}/s2_2020/"
+    tile_dir = f"{config.DATA_DIR}/{config.REGION}/s2_2020/"
     # 原始 SHP 路径
     input_shp = config.SHP_PATH 
     # 输出同步后的新 SHP 路径

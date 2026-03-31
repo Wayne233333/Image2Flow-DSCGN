@@ -17,11 +17,11 @@ import numpy as np
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 import sys
-sys.path.append('../code')
+sys.path.append('..')
 import config as config
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--data_path', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION, 'MIX_IMG')) 
+parser.add_argument('--data_path', type=str, default=os.path.join(config.DATA_DIR, config.REGION, 'MIX_IMG')) 
 parser.add_argument('--bands', type=int, default=3)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--batch_size', type=int, default=24)   #128
@@ -30,12 +30,12 @@ parser.add_argument('--resnet', type=str, default='resnet50')
 parser.add_argument('--temperature', type=float, default=0.5)
 parser.add_argument('--world_size', type=int, default=1)
 parser.add_argument('--total_epoch', type=int, default=120)
-parser.add_argument('--output_path', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION, f'img_encoder_mix_{config.YEAR}.pth'))
+parser.add_argument('--output_path', type=str, default=os.path.join(config.DATA_DIR, config.REGION, f'img_encoder_mix_{config.YEAR}.pth'))
 parser.add_argument('--schedule', default=[90, 110], nargs='*', type=int,
                     help='learning rate schedule (when to drop lr by 10x)')
 parser.add_argument('--cos', type=bool, default=False)
-parser.add_argument('--log', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION, f'img_encoder_mix_{config.YEAR}.log'))
-parser.add_argument('--loss', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION, f'loss_mix_{config.YEAR}.jpg'))
+parser.add_argument('--log', type=str, default=os.path.join(config.DATA_DIR, config.REGION, f'img_encoder_mix_{config.YEAR}.log'))
+parser.add_argument('--loss', type=str, default=os.path.join(config.DATA_DIR, config.REGION, f'loss_mix_{config.YEAR}.jpg'))
 
 def adjust_learning_rate(optimizer, epoch, args):
     lr = args.lr

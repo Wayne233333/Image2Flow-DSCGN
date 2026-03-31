@@ -16,7 +16,9 @@ import numpy as np
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
-import config
+import sys
+sys.path.append('../code')
+import config as config
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--data_path', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION, 'MIX_IMG')) 

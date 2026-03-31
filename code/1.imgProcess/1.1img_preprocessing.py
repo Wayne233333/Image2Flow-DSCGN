@@ -2,7 +2,9 @@ import os
 from osgeo import gdal
 import geopandas as gpd
 import argparse
-import config
+import sys
+sys.path.append('../code')
+import config as config
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--input_tif_path', type=str, default=os.path.join(config.BASE_DATA_DIR, config.REGION, config.REGION + "_" + config.YEAR + "_WGS84.tif"))

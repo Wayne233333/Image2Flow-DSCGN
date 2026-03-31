@@ -17,7 +17,9 @@ import pandas as pd
 from collections import OrderedDict
 import logging
 logging.getLogger('PIL').setLevel(logging.WARNING)
-import config
+import sys
+sys.path.append('../code')
+import config as config
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 

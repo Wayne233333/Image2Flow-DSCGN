@@ -5,19 +5,19 @@ import argparse
 import torch_geometric.data
 import math
 import torch.nn as nn
-from modules import *
 import logging
 logging.getLogger('PIL').setLevel(logging.WARNING)
-
-from dataset import ImageAugDataset
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+
 import sys
 sys.path.append('..')
+from modules import *
+from dataset import ImageAugDataset
 import config as config
 
 parser = argparse.ArgumentParser()

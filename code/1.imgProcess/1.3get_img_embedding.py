@@ -5,20 +5,21 @@ import torchvision
 import argparse
 import torch.nn.functional as F
 import torch.nn as nn
-from modules import ImageEncoder
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import torch.multiprocessing
-from dataset import ImageAugDataset
 from tqdm import tqdm
 import pickle
 import pandas as pd
 from collections import OrderedDict
 import logging
 logging.getLogger('PIL').setLevel(logging.WARNING)
+
 import sys
 sys.path.append('..')
+from modules import ImageEncoder
+from dataset import ImageAugDataset
 import config as config
 
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -31,7 +32,6 @@ parser.add_argument('--model_path', type=str, default='./ckpt')
 parser.add_argument('--log', type=str, default=f'./log/get_embedding_{config.REGION}_{config.YEAR}.log')
 parser.add_argument('--output_path', type=str, default=os.path.join(config.DATA_DIR, "Vis", f"train_on_{config.REGION}_{config.YEAR}.csv"))
 parser.add_argument('--ckpt', type=str, default=f'img_encoder_mix_{config.YEAR}.pth')
-
 
 if __name__ == '__main__':
     args = parser.parse_args()

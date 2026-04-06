@@ -11,7 +11,7 @@ sys.path.append('..')
 import config as config
 import os
     
-def load_nids_dataset(node_feats_path=os.path.join('..', 'data', 'Vis', f'default_{config.YEAR}.csv'), poi_pred_path=None, year=config.YEAR, fprefix='CommutingFlow_', region=config.REGION, mappath=os.path.join('..', 'data', 'CensusTract2020', 'nodeid_geocode_mapping.csv')):
+def load_nids_dataset(node_feats_path=os.path.join('..', 'data', 'Vis', f'default_{config.YEAR}.csv'), poi_pred_path=None, year=config.YEAR, fprefix='CommutingFlow_', region=config.REGION, mappath=os.path.join('..', 'data', f'CCensusTract{config.YEAR}', 'nodeid_geocode_mapping.csv')):
     
     region_prefix = region.split('t')[0]
     nid_dir = os.path.join('..', 'data', 'Nid', region_prefix)

@@ -8,7 +8,7 @@ import os
 
 def run():
     config.ensure_dirs()
-    map_path = os.path.join(config.CENSUS_DIR, f"nodeid_geocode_mapping_{config.REGION_PREFIX}.csv")
+    map_path = os.path.join(config.CENSUS_DIR, f"nodeid_geocode_mapping_{config.REGION}.csv")
     unique_geocodes = pd.read_csv(map_path, dtype={'geocode': str})['geocode'].tolist()
 
     print(f"划分数据集 (种子: {config.RANDOM_SEED})...")
@@ -16,10 +16,10 @@ def run():
     val, test = train_test_split(temp, test_size=(config.SPLIT_RATIO["test"] / (1 - config.SPLIT_RATIO["train"])), random_state=config.RANDOM_SEED)
 
     # 导出索引文件
-    pd.DataFrame({'geocode': train}).to_csv(os.path.join(config.NID_DIR, f"train_nids_{config.REGION_NAME}.csv"), index=False)
-    pd.DataFrame({'geocode': val}).to_csv(os.path.join(config.NID_DIR, f"valid_nids_{config.REGION_NAME}.csv"), index=False)
-    pd.DataFrame({'geocode': test}).to_csv(os.path.join(config.NID_DIR, f"test_nids_{config.REGION_NAME}.csv"), index=False)
-    pd.DataFrame({'geocode': unique_geocodes}).to_csv(os.path.join(config.NID_DIR, f"all_nids_{config.REGION_PREFIX}.csv"), index=False)
+    pd.DataFrame({'geocode': train}).to_csv(os.path.join(config.NID_DIR, f"train_nids_{config.REGION}.csv"), index=False)
+    pd.DataFrame({'geocode': val}).to_csv(os.path.join(config.NID_DIR, f"valid_nids_{config.REGION}.csv"), index=False)
+    pd.DataFrame({'geocode': test}).to_csv(os.path.join(config.NID_DIR, f"test_nids_{config.REGION}.csv"), index=False)
+    pd.DataFrame({'geocode': unique_geocodes}).to_csv(os.path.join(config.NID_DIR, f"all_nids_{config.REGION}.csv"), index=False)
 
     print(f"划分完成。索引文件已存至: {config.NID_DIR}")
 

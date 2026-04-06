@@ -1,60 +1,100 @@
 import json
 import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Point
+import os
 import sys
+
 sys.path.append("..")
 import config as config
-import os
 
-jsonfile = os.path.join(config.DATA_DIR, config.REGION, "POI", "export.json")
-outputfile = os.path.join(config.DATA_DIR, config.REGION, "POI", f"{config.REGION}_POI.csv")
+json_path = os.path.join(config.DATA_DIR, config.REGION, "POI", "export.json")
+shp_path = os.path.join(config.DATA_DIR, config.REGION, "shapefile", f"tl_{config.YEAR}_{config.REGION}_tract.shp")
+output_csv = os.path.join(config.DATA_DIR, config.REGION, "POI", f"{config.REGION}_POI.csv")
 
-def process_osm_json(input_file, output_file):
+def process_and_aggregate_poi():
+    target_tags = ['amenity', 'shop', 'building', 'highway', 'railway', 'tourism', 'leisure', 'office', 'industrial']
+    
+    # 1. 加载普查区 Shapefile
+    print("正在加载普查区 Shapefile...")
+    census_gdf = gpd.read_file(shp_path)
+    
+    # 识别 ID 字段
+    id_field = 'GEOID' 
+    if id_field not in census_gdf.columns:
+        possible_ids = ['GEOID20', 'GEOID10', 'AFFGEOID', 'TRACTCE']
+        for p_id in possible_ids:
+            if p_id in census_gdf.columns:
+                id_field = p_id
+                break
+    print(f"使用字段 '{id_field}' 作为普查区唯一标识。")
 
-    target_tags = [
-        'amenity', 'shop', 'building', 'highway', 'railway', 
-        'tourism', 'leisure', 'office', 'industrial'
-    ]
-    all_columns = ['id', 'name', 'lat', 'lon'] + target_tags
+    # 【新增逻辑】计算面积特征
+    # 将坐标系临时转为 Web Mercator (EPSG:3857) 以计算平方米，然后转为平方公里
+    print("正在计算普查区面积...")
+    census_gdf['area'] = census_gdf.to_crs(epsg=3857).area / 10**6 
 
-    with open(input_file, 'r', encoding='utf-8') as f:
-        content = f.read()
-        # 移除外层的 { } 大括号（如果存在）
-        content = content.strip()
-        if content.startswith('{') and content.endswith('}'):
-            # 找到第一个 [ 和最后一个 ]
-            start_idx = content.find('[')
-            end_idx = content.rfind(']')
-            if start_idx != -1 and end_idx != -1:
-                content = content[start_idx:end_idx+1]
+    # 2. 加载并清洗 OSM 数据
+    print("正在加载并清洗 OSM 数据...")
+    with open(json_path, 'r', encoding='utf-8') as f:
+        content = f.read().strip()
+    
+    try:
         data = json.loads(content)
+        if isinstance(data, dict):
+            data = data.get('elements', [])
+    except json.JSONDecodeError:
+        start_idx = content.find('[')
+        end_idx = content.rfind(']')
+        if start_idx != -1 and end_idx != -1:
+            content = content[start_idx:end_idx+1]
+            data = json.loads(content)
+        else:
+            raise ValueError("无法解析 JSON 文件，请检查格式。")
 
-    processed_list = []
-
-    # 2. 遍历并展平数据
+    # 3. 构建 POI 点图层
+    poi_list = []
     for item in data:
-        # 基础数据
-        row = {
-            'id': item.get('id'),
-            'lat': item.get('lat'),
-            'lon': item.get('lon')
-        }
-        
-        tags = item.get('tags', {})
-        
-        row['name'] = tags.get('name', '')
-        
-        for tag_name in target_tags:
-            row[tag_name] = tags.get(tag_name, '')
-
-        processed_list.append(row)
-
-    df = pd.DataFrame(processed_list)
+        if 'lat' in item and 'lon' in item:
+            row = {'lat': item['lat'], 'lon': item['lon']}
+            tags = item.get('tags', {})
+            for tag in target_tags:
+                row[tag] = 1 if tag in tags else 0
+            poi_list.append(row)
     
-    df = df[all_columns]
+    if not poi_list:
+        print("警告：未解析出有效 POI。")
+        poi_gdf = gpd.GeoDataFrame(columns=['geometry'] + target_tags, crs="EPSG:4326")
+    else:
+        poi_df = pd.DataFrame(poi_list)
+        geometry = [Point(xy) for xy in zip(poi_df['lon'], poi_df['lat'])]
+        poi_gdf = gpd.GeoDataFrame(poi_df, geometry=geometry, crs="EPSG:4326")
+
+    # 4. 统一坐标系进行空间关联
+    if census_gdf.crs != poi_gdf.crs:
+        poi_gdf = poi_gdf.to_crs(census_gdf.crs)
+
+    print("正在进行空间关联...")
+    joined = gpd.sjoin(poi_gdf, census_gdf[[id_field, 'geometry']], predicate='within', how='inner')
     
-    df = df.sort_values(by=['lat', 'lon'], ascending=[True, True])
+    # 统计有 POI 的区域
+    poi_stats = joined.groupby(id_field)[target_tags].sum().reset_index()
 
-    df.to_csv(output_file, index=False, encoding='utf-8-sig')
-    print(f"处理完成！文件已保存至: {output_file}")
+    # 5. 合并回原始普查区列表（保留面积和所有区域）
+    print("正在合并所有数据并生成最终 CSV...")
+    # 注意：这里我们保留了 id_field 和 area 两列
+    all_tracts = census_gdf[[id_field, 'area']].copy()
+    final_df = pd.merge(all_tracts, poi_stats, on=id_field, how='left')
+    
+    # 填充缺失值为 0
+    final_df[target_tags] = final_df[target_tags].fillna(0).astype(int)
+    
+    # 重命名 ID 列为 geocode 以适配后续脚本
+    final_df.rename(columns={id_field: 'geocode'}, inplace=True)
 
-process_osm_json(jsonfile, outputfile)
+    print(f"处理完成。总普查区数: {len(final_df)}，面积列已添加。")
+    final_df.to_csv(output_csv, index=False)
+    print(f"结果已保存至: {output_csv}")
+
+if __name__ == "__main__":
+    process_and_aggregate_poi()

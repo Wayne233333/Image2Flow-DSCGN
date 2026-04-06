@@ -29,9 +29,9 @@ parser.add_argument('--data_path', type=str, default=os.path.join(config.DATA_DI
 parser.add_argument('--bands', type=int, default=0)
 parser.add_argument('--projection_dim', type=int, default=128)
 parser.add_argument('--model_path', type=str, default='./ckpt')
-parser.add_argument('--log', type=str, default=f'./log/get_embedding_{config.REGION}_{config.YEAR}.log')
+parser.add_argument('--log', type=str, default=os.path.join("..", "log", f'get_embedding_{config.REGION}_{config.YEAR}.log'))
 parser.add_argument('--output_path', type=str, default=os.path.join(config.DATA_DIR, "Vis", f"train_on_{config.REGION}_{config.YEAR}.csv"))
-parser.add_argument('--ckpt', type=str, default=f'img_encoder_mix_{config.YEAR}.pth')
+parser.add_argument('--ckpt', type=str, default=os.path.join("..", "ckpt", f'img_encoder_mix_{config.YEAR}.pth'))
 
 if __name__ == '__main__':
     args = parser.parse_args()

@@ -89,8 +89,8 @@ def process_od_data_with_distance(od_folder, shp_path, output_path):
     print(f"保存路径: {output_path}")
 
 if __name__ == "__main__":
-    OD_FOLDER = config.OD_FOLDER
-    SHP_PATH = config.SHP_PATH
-    OUTPUT_FILE = os.path.join(config.LODES_DIR, f"CommutingFlow_{config.REGION_NAME}_{config.YEAR}gt10.csv")
+    OD_FOLDER = os.path.join(config.DATA_DIR, config.REGION, "OD", config.YEAR)
+    SHP_PATH = os.path.join(config.DATA_DIR, config.REGION, "shapefile", f"tl_{config.YEAR}_{config.REGION}_tract.shp")
+    OUTPUT_FILE = os.path.join(config.LODES_DIR, f"CommutingFlow_{config.REGION}_{config.YEAR}gt10.csv")
 
     process_od_data_with_distance(OD_FOLDER, SHP_PATH, OUTPUT_FILE)

@@ -6,15 +6,20 @@ import dgl
 import pickle
 import warnings
 
-def load_nids_dataset(node_feats_path='../data/Vis/default.csv', year=2020, fprefix='CommutingFlow_', region='default', mappath='../data/CensusTract2020/nodeid_geocode_mapping.csv'):
+import sys
+sys.path.append('..')
+import config as config
+import os
+    
+def load_nids_dataset(node_feats_path=os.path.join('..', 'data', 'Vis', f'default_{config.YEAR}.csv'), poi_pred_path=None, year=config.YEAR, fprefix='CommutingFlow_', region=config.REGION, mappath=os.path.join('..', 'data', 'CensusTract2020', 'nodeid_geocode_mapping.csv')):
     
     region_prefix = region.split('t')[0]
-    nid_dir = f"../data/Nid/{region_prefix}/"
+    nid_dir = os.path.join('..', 'data', 'Nid', region_prefix)
 
-    train_nids = pd.read_csv(f'{nid_dir}train_nids_{region}.csv', dtype={'geocode': 'string'})
-    val_nids = pd.read_csv(f'{nid_dir}valid_nids_{region}.csv', dtype={'geocode': 'string'})
-    test_nids = pd.read_csv(f'{nid_dir}test_nids_{region}.csv', dtype={'geocode': 'string'})
-    all_nids = pd.read_csv(f'{nid_dir}all_nids_{region_prefix}.csv', dtype={'geocode': 'string'})
+    train_nids = pd.read_csv(os.path.join(nid_dir, f'train_nids_{region}.csv'), dtype={'geocode': 'string'})
+    val_nids = pd.read_csv(os.path.join(nid_dir, f'valid_nids_{region}.csv'), dtype={'geocode': 'string'})
+    test_nids = pd.read_csv(os.path.join(nid_dir, f'test_nids_{region}.csv'), dtype={'geocode': 'string'})
+    all_nids = pd.read_csv(os.path.join(nid_dir, f'all_nids_{region_prefix}.csv'), dtype={'geocode': 'string'})
     
     mapping_table = pd.read_csv(mappath.replace(".csv", f"_{region_prefix}.csv"), dtype={'geocode': 'string'})
 
@@ -23,6 +28,7 @@ def load_nids_dataset(node_feats_path='../data/Vis/default.csv', year=2020, fpre
     odflows = pd.read_csv(odflows_file, dtype={'w_geocode': 'string', 'h_geocode': 'string'})
     odflows = geocode_to_nodeid(odflows, mapping_table)    
     
+    # 1. 加载影像视觉特征
     node_feats = pd.read_csv(node_feats_path, dtype={'geocode': 'string'})
     node_feats['geocode'] = mapping_table.set_index('geocode').loc[node_feats['geocode']].values
     node_feats = node_feats.rename(columns={'geocode': 'nid'}).set_index('nid').sort_index()
@@ -31,7 +37,19 @@ def load_nids_dataset(node_feats_path='../data/Vis/default.csv', year=2020, fpre
     std = std.replace(0, 1e-9) 
     node_feats = (node_feats - node_feats.mean()) / std
 
-    adjpath = f'../data/CensusTract2020/adjacency_matrix_bycar_m_{region_prefix}.csv'
+    # 2. 【新增】加载预测的 POI 势能特征
+    if poi_pred_path and os.path.exists(poi_pred_path):
+        poi_feats = pd.read_csv(poi_pred_path, dtype={'geocode': 'string'})
+        poi_feats['geocode'] = mapping_table.set_index('geocode').loc[poi_feats['geocode']].values
+        poi_feats = poi_feats.rename(columns={'geocode': 'nid'}).set_index('nid').sort_index()
+        # 对势能矩阵同样进行标准化，避免梯度爆炸
+        p_std = poi_feats.std().replace(0, 1e-9)
+        poi_feats = (poi_feats - poi_feats.mean()) / p_std
+        poi_feats_val = poi_feats.values
+    else:
+        poi_feats_val = None
+
+    adjpath = os.path.join('..', 'data', 'CensusTract2020', f'adjacency_matrix_bycar_m_{region_prefix}.csv')
     ct_adj = pd.read_csv(adjpath, dtype={'Unnamed: 0': 'string'}).set_index('Unnamed: 0')
     
     ct_inorder = mapping_table.sort_values(by='node_id')['geocode']
@@ -50,6 +68,7 @@ def load_nids_dataset(node_feats_path='../data/Vis/default.csv', year=2020, fpre
         'odflows': odflows[['src', 'dst', 'count', 'dis_m']].values,
         'num_nodes': ct_adj.shape[0],
         'node_feats': node_feats.values,
+        'poi_feats': poi_feats_val,  # 导出势能矩阵
         'weighted_adjacency': ct_adj.values
     }
     return data
@@ -65,20 +84,25 @@ def geocode_to_nodeid(dataframe, mapping_table):
 def nodeid_to_geocode(dataframe, region):
     df = dataframe.copy()
     region_prefix = region.split('t')[0]
-    mapping = pd.read_csv(f'../data/CensusTract2020/nodeid_geocode_mapping_{region_prefix}.csv').copy()           
+    mapping = pd.read_csv(os.path.join('..', 'data', 'CensusTract2020', f'nodeid_geocode_mapping_{region_prefix}.csv')).copy()           
     mapping.set_index('node_id', inplace=True)
     df['h_geocode'] = mapping.loc[df['src']].values
     df['w_geocode'] = mapping.loc[df['dst']].values
     return df[['h_geocode', 'w_geocode', 'count', 'prediction']]
 
-def build_graph_from_matrix(adj_matrix, node_feats, device='cpu'):
+def build_graph_from_matrix(adj_matrix, node_feats, poi_feats=None, device='cpu'):
     dst, src = adj_matrix.nonzero()
     edge_weights = torch.tensor(adj_matrix[adj_matrix.nonzero()]).float().view(-1, 1)
     g = dgl.DGLGraph()
     g = g.to(device)
     g.add_nodes(adj_matrix.shape[0])
     g.add_edges(src, dst, {'d': edge_weights})
+    
     g.ndata['attr'] = torch.from_numpy(node_feats).to(device)
+    
+    if poi_feats is not None:
+        g.ndata['pot'] = torch.from_numpy(poi_feats).to(device)
+        
     return g
 
 def evaluateOne(model, g, trip_od, trip_volume, output_nodes):

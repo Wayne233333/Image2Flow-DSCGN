@@ -5,7 +5,8 @@ import os
 DATA_DIR = os.path.join("..", "..", "data")
 
 # --- 区域设置 ---
-REGION = "NY"
+REGION = "LA"
+MODEL = "NY"
 YEAR = "2020"
 
 # --- 划分参数 ---
@@ -13,7 +14,7 @@ SPLIT_RATIO = {"train": 0.8, "val": 0.1, "test": 0.1}
 RANDOM_SEED = 42
 
 # --- 自动推导路径 (通常不需要修改) ---
-CENSUS_DIR = os.path.join(DATA_DIR, f"CCensusTract{YEAR}")
+CENSUS_DIR = os.path.join(DATA_DIR, f"CensusTract{YEAR}")
 NID_DIR = os.path.join(DATA_DIR, f"Nid/{REGION}")
 LODES_DIR = os.path.join(DATA_DIR, "LODES")
 

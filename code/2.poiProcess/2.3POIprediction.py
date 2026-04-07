@@ -24,52 +24,50 @@ def predict_and_save_clean_results():
     feature_cols = checkpoint['feature_cols']
     target_columns = checkpoint['target_columns']
 
-    # 2. 加载待预测数据（用于构造特征矩阵）
+    # 2. 加载待预测数据
     feat_csv_path = os.path.join(config.DATA_DIR, "Vis", f"train_on_{config.REGION}_{config.YEAR}.csv")
-    poi_csv_path = os.path.join(config.DATA_DIR, config.REGION, "POI", f"{config.REGION}_POI.csv")
-    
     feat_df = pd.read_csv(feat_csv_path)
-    poi_df = pd.read_csv(poi_csv_path)
-    
     feat_df['geocode'] = feat_df['geocode'].astype(str)
-    poi_df['geocode'] = poi_df['geocode'].astype(str)
-    merged = pd.merge(feat_df, poi_df, on='geocode', how='inner')
 
-    # 3. 构造特征（需与训练时完全一致）
-    context_cols = ['building', 'highway', 'railway', 'tourism', 'leisure', 'office', 'industrial']
-    for col in context_cols:
-        merged[f'{col}_density'] = merged[col] / (merged['area'] + 0.001)
-    
-    merged['county_code'] = merged['geocode'].str[:5]
-    county_dummies = pd.get_dummies(merged['county_code'], prefix='county')
-    merged = pd.concat([merged, county_dummies], axis=1)
-
-    # 补齐训练时存在但当前数据缺失的 One-Hot 列
-    for col in feature_cols:
-        if col not in merged.columns:
-            merged[col] = 0
-
-    # 4. 执行预测
-    X_input = merged[feature_cols].values
+    # 3. 执行预测（仅使用遥感特征向量）
+    X_input = feat_df[feature_cols].values
     X_scaled = scaler_x.transform(X_input)
     
     logging.info(f"正在生成预测数据...")
     y_pred_std = model.predict(X_scaled)
     
-    # 5. 逆变换还原真实数值
+    # 4. 逆变换还原真实数值
     y_pred_log = scaler_y.inverse_transform(y_pred_std)
     y_pred_final = np.expm1(y_pred_log) # 还原 e^x - 1
 
-    # 6. 【核心修改】仅保存 geocode 和去掉 pred_ 前缀的预测结果
-    # 直接使用原始 target_columns 作为列名
-    result_df = pd.DataFrame(y_pred_final, columns=target_columns)
-    result_df.insert(0, 'geocode', merged['geocode'].values)
+    y_pred_final = np.clip(y_pred_final, 0, None)
     
-    # 保存结果，不包含原始真实值列
+    result_df = pd.DataFrame(y_pred_final, columns=target_columns)
+    result_df.insert(0, 'geocode', feat_df['geocode'].values)
+    
+    for col in ['amenity', 'shop']:
+        if col in result_df.columns:
+            result_df[col] = result_df[col].round().astype(int)
+    
+    poi_csv_path = os.path.join(config.DATA_DIR, config.REGION, "POI", f"{config.REGION}_POI.csv")
+    if os.path.exists(poi_csv_path):
+        logging.info(f"检测到原始数据，正在增加 _origin 列...")
+        poi_df = pd.read_csv(poi_csv_path)
+        poi_df['geocode'] = poi_df['geocode'].astype(str)
+        
+        origin_cols = ['geocode', 'area', 'amenity', 'shop']
+        poi_origin = poi_df[origin_cols].rename(columns={
+            'area': 'area_origin',
+            'amenity': 'amenity_origin',
+            'shop': 'shop_origin'
+        })
+        
+        result_df = pd.merge(result_df, poi_origin, on='geocode', how='left')
+    
+    # 5. 保存结果
     output_path = os.path.join(config.DATA_DIR, config.REGION, "POI", f"{config.REGION}_pred.csv")
     result_df.to_csv(output_path, index=False)
-    
-    logging.info(f"预测结果已净化并保存至: {output_path}")
+    logging.info(f"结果已保存至: {output_path}")
 
 if __name__ == "__main__":
     predict_and_save_clean_results()

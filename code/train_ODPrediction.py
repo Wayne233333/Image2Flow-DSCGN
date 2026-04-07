@@ -2,270 +2,163 @@ import pandas as pd
 import numpy as np
 import torch
 import os
-
+import logging
+import argparse
+import dgl
+from torch.utils.data import DataLoader
 from sklearn.metrics import mean_squared_error, mean_absolute_error
-import logging 
 
 from dataset import utils
 from modules.gnn import MyModelBlock
-import dgl
 
-import argparse
 import sys
 sys.path.append('..')
 import config as config
 
+# 参数配置
 parser = argparse.ArgumentParser()
-parser.add_argument('--log', type=str, default=os.path.join('log', f'DSGNN_{config.REGION}_{config.YEAR}.log'))
-parser.add_argument('--node_feats_path', type=str, default=os.path.join('..', 'data', 'Vis', f'train_on_{config.REGION}_{config.YEAR}.csv')) 
-# 【新增】势阱层数据路径（即刚刚预测输出的 POI CSV）
-parser.add_argument('--poi_pred_path', type=str, default=os.path.join('..', 'data', config.REGION, 'POI', f'{config.REGION}_pred.csv')) 
-parser.add_argument('--region', type=str, default=config.REGION) 
-parser.add_argument('--year', type=str, default=config.YEAR) 
-parser.add_argument('--device', type=str, default = 'cuda:0')
+parser.add_argument('--region', type=str, default=config.REGION)
+parser.add_argument('--year', type=str, default=config.YEAR)
+parser.add_argument('--node_feats_path', type=str, default=os.path.join(config.DATA_DIR, 'Vis', f'train_on_{config.REGION}_{config.YEAR}.csv'))
+parser.add_argument('--device', type=str, default='cuda:0')
 parser.add_argument('--max_epochs', type=int, default=100)
-parser.add_argument('--lr', type=float, default = 1e-5)
-parser.add_argument('--grad_norm', type=float, default=1.0)
-parser.add_argument('--evaluate_every', type=int, default=5)
+parser.add_argument('--lr', type=float, default=1e-4)
+parser.add_argument('--batch_size', type=int, default=512)
+parser.add_argument('--micro_batch_size', type=int, default=64)
 parser.add_argument('--num_hidden_layers', type=int, default=2)
 parser.add_argument('--embedding_size', type=int, default=512)
+parser.add_argument('--evaluate_every', type=int, default=5)
 
-def adjust_learning_rate_warmup(optimizer, epoch, warmup_epochs, initial_lr, max_lr):
-    if epoch < warmup_epochs:
-        lr = initial_lr + (max_lr - initial_lr) * (epoch / warmup_epochs)
-        for param_group in optimizer.param_groups:
-            if 'name' in param_group and param_group['name'] == 'noise_sigma':
-                continue
-            param_group['lr'] = lr
-    else:
-        for param_group in optimizer.param_groups:
-            if 'name' in param_group and param_group['name'] == 'noise_sigma':
-                continue
-            param_group['lr'] = max_lr
-
-def train(train_args, logger):
-    device = torch.device(train_args.device)
-
-    torch.manual_seed(42)
-    np.random.seed(42)
-
-    region = train_args.region
-    # 传入 poi_pred_path
-    data = utils.load_nids_dataset(year=train_args.year,
-                                   node_feats_path=train_args.node_feats_path, 
-                                   poi_pred_path=train_args.poi_pred_path,
-                                   region=region)
-
+def train(args, logger):
+    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+    region = args.region
+    
+    # 1. 加载数据集
+    mappath = os.path.join(config.DATA_DIR, f'CensusTract{args.year}', f'nodeid_geocode_mapping_{region}.csv')
+    data = utils.load_nids_dataset(
+        node_feats_path=args.node_feats_path, 
+        year=args.year, 
+        region=region, 
+        mappath=mappath
+    )
+    
     train_nids = data['train_nids']
     valid_nids = data['valid_nids']
     test_nids = data['test_nids']
-
-    odflows = data['odflows']
-
-    train_nids_d = np.unique(odflows[np.isin(odflows[:, 0], train_nids)][:,1])
-    train_nids_od =  np.unique(np.append(train_nids, train_nids_d, axis=0))
-    valid_nids_d = np.unique(odflows[np.isin(odflows[:, 0], valid_nids)][:,1])
-    valid_nids_od =  np.unique(np.append(valid_nids, valid_nids_d, axis=0))
-    test_nids_d = np.unique(odflows[np.isin(odflows[:, 0], test_nids)][:,1])
-    test_nids_od =  np.unique(np.append(test_nids, test_nids_d, axis=0))
-
     node_feats = data['node_feats']
-    poi_feats = data['poi_feats'] # 提取 DSGNN 势能特征
-    
-    init_noise_sigma = np.std(np.log10(odflows[np.isin(odflows[:, 0], train_nids)][:, 2]))
-    print("init_noise_sigma ", init_noise_sigma)
-
-    ct_adj = data['weighted_adjacency']
+    odflows = data['odflows']
+    adj = data['weighted_adjacency']
     num_nodes = data['num_nodes']
-    
-    # 确定势能特征的维度，如果没加载则为 0
-    pot_dim = poi_feats.shape[1] if poi_feats is not None else 0
 
-    # 【重要修改】将 pot_dim 传入你的 MyModelBlock
-    model = MyModelBlock(num_nodes, 
-                         in_dim = node_feats.shape[1], 
-                         pot_dim = pot_dim, # 势阱矩阵的维度 (如 amenity, shop, area 共 3 维)
-                         h_dim = train_args.embedding_size, 
-                         num_hidden_layers=train_args.num_hidden_layers,
-                         init_noise_sigma = init_noise_sigma, 
-                         device=device)
-                         
-    # 构建包含势阱特征 `pot` 的图
-    g = utils.build_graph_from_matrix(ct_adj, node_feats.astype(np.float32), poi_feats.astype(np.float32), device)  
+    # 2. 构建 DSGNN 基础图
+    g = utils.build_graph_from_matrix(adj, node_feats.astype(np.float32), device)
     
+    # 【DSGNN 核心】：加载势能对角矩阵 V 并挂载到节点上
+    try:
+        v_matrix_path = os.path.join('../data', region, 'POI', f'{region}_V_matrix.npy')
+        if os.path.exists(v_matrix_path):
+            v_matrix = np.load(v_matrix_path)
+            v_diag = np.diag(v_matrix).astype(np.float32)
+            g.ndata['v'] = torch.from_numpy(v_diag).to(device)
+            logger.info(f"成功加载并挂载势能矩阵 V，节点数: {len(v_diag)}")
+        else:
+            logger.warning(f"未找到势能矩阵文件 {v_matrix_path}，模型将退化为标准 GNN。")
+    except Exception as e:
+        logger.error(f"加载势能矩阵出错: {e}")
+
+    # 3. 初始化模型与优化器
+    # 计算初始噪音 sigma (用于 BMCLoss)
+    target_counts = odflows[np.isin(odflows[:, 0], train_nids)][:, 2]
+    init_noise_sigma = np.std(np.log2(target_counts + 1.0))
+    
+    model = MyModelBlock(
+        num_nodes=num_nodes, 
+        in_dim=node_feats.shape[1], 
+        h_dim=args.embedding_size, 
+        num_hidden_layers=args.num_hidden_layers,
+        init_noise_sigma=init_noise_sigma,
+        device=device
+    )
     model.to(device)
-    g.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    # minibatch
-    batch_size = 512
-    sampler = dgl.dataloading.MultiLayerFullNeighborSampler(train_args.num_hidden_layers+1)
-    train_dataloader = dgl.dataloading.DataLoader(
-        g, torch.from_numpy(train_nids_od).to(device), sampler,
-        batch_size=batch_size,
-        shuffle=True,
-        drop_last=False)
-    valid_dataloader = dgl.dataloading.DataLoader(
-        g, torch.from_numpy(valid_nids_od).to(device), sampler,
-        batch_size=len(valid_nids_od),
-        shuffle=True,
-        drop_last=False)
-    test_dataloader = dgl.dataloading.DataLoader(
-        g, torch.from_numpy(test_nids_od).to(device), sampler,
-        batch_size=len(test_nids_od), 
-        shuffle=True,
-        drop_last=False)
-  
-    os.makedirs('./ckpt', exist_ok=True)
-    model_state_file = './ckpt/{}_layers{}_emb{}.pth'.format(train_args.log.strip('log/').strip('.log'),train_args.num_hidden_layers, train_args.embedding_size)
+    # 4. 准备数据迭代器 (使用邻域采样防止图过大)
+    sampler = dgl.dataloaders.MultiLayerFullNeighborSampler(args.num_hidden_layers)
+    train_dataloader = dgl.dataloaders.DataLoader(
+        g, train_nids, sampler,
+        batch_size=args.micro_batch_size, shuffle=True, drop_last=False
+    )
+    valid_dataloader = dgl.dataloaders.DataLoader(
+        g, valid_nids, sampler,
+        batch_size=args.micro_batch_size, shuffle=False, drop_last=False
+    )
+
+    # 5. 训练循环
     best_rmse = float('inf')
-
-    initial_lr = 1e-6
-    warmup_epochs = 5
-    early_stopping_patience = 20
-    best_val_loss = float('inf')
-    early_stopping_counter = 0
-    noise_var = AverageMeter()
-    criterion_params = list(model.criterion.parameters())
+    accumulation_steps = args.batch_size // args.micro_batch_size
     
-    criterion_param_ids = list(map(id, criterion_params))
-    model_params = filter(lambda p: id(p) not in criterion_param_ids, model.parameters())
-    optimizer = torch.optim.Adam([
-        {'params': model_params, 'lr': train_args.lr},
-        {'params': criterion_params, 'lr': 1e-2}
-    ])
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 40, gamma=0.1)
-    
-    for epoch in range(train_args.max_epochs):
+    for epoch in range(args.max_epochs):
         model.train()
-        adjust_learning_rate_warmup(optimizer, epoch, warmup_epochs, initial_lr, train_args.lr)
+        total_loss = 0
+        optimizer.zero_grad()
+        
         for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
-            optimizer.zero_grad()
-            origin_train_nids = output_nodes.cpu()[np.isin(output_nodes.cpu(), train_nids)]
-
-            condition1 = np.isin(odflows[:, 0], origin_train_nids)
-            condition2 = np.isin(odflows[:, 1], output_nodes.cpu())
-
-            combined_condition = condition1 & condition2
-
-            trip_od = torch.from_numpy(odflows[combined_condition][:, :2].astype(np.int64)).to(device)
-
-            log_trip_volume = utils.log_transform(torch.from_numpy(odflows[combined_condition][:, -1].astype(float))).to(device)
-            loss = model.get_loss(output_nodes, trip_od, log_trip_volume, blocks)
-            noise_var.update(model.criterion.noise_sigma.item() ** 2)
+            # 获取当前 Batch 的 OD 标签
+            mask = np.isin(odflows[:, 0], output_nodes.cpu()) & np.isin(odflows[:, 1], g.nodes().cpu())
+            if not mask.any(): continue
+            
+            trip_od = torch.from_numpy(odflows[mask][:, :2].astype(np.int64)).to(device)
+            trip_vol = torch.from_numpy(odflows[mask][:, 2].astype(float)).to(device)
+            log_trip_vol = utils.log_transform(trip_vol)
+            
+            # 前向传播与 Loss 计算
+            loss = model.get_loss(output_nodes, trip_od, log_trip_vol, blocks)
+            loss = loss / accumulation_steps
             loss.backward()
-
-            torch.nn.utils.clip_grad_norm_(model.parameters(), train_args.grad_norm)
-            optimizer.step()
             
-        scheduler.step()
-        
-        if logger.level == logging.DEBUG:
-            model.eval()
-            for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
-                with torch.no_grad():
-                    origin_train_nids = output_nodes.cpu()[np.isin(output_nodes.cpu(), train_nids)]
-                    condition1 = np.isin(odflows[:, 0], origin_train_nids)
-                    condition2 = np.isin(odflows[:, 1], output_nodes.cpu())
-                    combined_condition = condition1 & condition2
-                    trip_od = torch.from_numpy(odflows[combined_condition][:, :2].astype(np.int64)).to(device)
-                    trip_volume = torch.from_numpy(odflows[combined_condition][:, -1].astype(float)).to(device)
-                    log_trip_volume = utils.log_transform(trip_volume)
-                    loss = model.get_loss(output_nodes, trip_od, log_trip_volume, blocks)
-                rmse, mae, cpc = utils.evaluateOne(model, blocks, trip_od, trip_volume, output_nodes)
+            if (it + 1) % accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                optimizer.zero_grad()
             
-                logger.debug(f'Epoch: {epoch:04d} - Train - Loss: {loss:.4f} | '
-                 f'RMSE: {rmse:.4f} - MAE: {mae:.4f} - CPC: {cpc:.4f}')
+            total_loss += loss.item()
 
-        # Valid
-        val_loss = 0
-        if epoch % train_args.evaluate_every == 0 or epoch == (train_args.max_epochs-1):
+        # 6. 验证环节
+        if epoch % args.evaluate_every == 0 or epoch == args.max_epochs - 1:
             model.eval()
-            for it, (input_nodes, output_nodes, blocks) in enumerate(valid_dataloader):
-                with torch.no_grad():
-                    origin_valid_nids = output_nodes.cpu()[np.isin(output_nodes.cpu(), valid_nids)]
-                    condition1 = np.isin(odflows[:, 0], origin_valid_nids)
-                    condition2 = np.isin(odflows[:, 1], output_nodes.cpu())
-                    combined_condition = condition1 & condition2
-
-                    trip_od_valid = torch.from_numpy(odflows[combined_condition][:, :2].astype(np.int64)).to(device)
-                    trip_volume_valid = torch.from_numpy(odflows[combined_condition][:, -1].astype(float)).to(device)
-                    log_trip_volume_valid = utils.log_transform(trip_volume_valid)
-                    loss = model.get_loss(output_nodes, trip_od_valid, log_trip_volume_valid, blocks)
-
-                rmse, mae, cpc = utils.evaluateOne(model, blocks, trip_od_valid, trip_volume_valid, output_nodes)
-        
-                logger.info("-----------------------------------------")
-                logger.info(f'Epoch: {epoch:04d} - Validation - Loss: {loss:.4f} | '
-                 f'RMSE: {rmse:.4f} - MAE: {mae:.4f} - CPC: {cpc:.4f}')
-                 
-                if rmse < best_rmse:
-                    best_rmse = rmse
-                    torch.save({'state_dict': model.state_dict(), 'epoch': epoch, 'rmse': rmse, 'mae': mae, 'cpc': cpc}, model_state_file)
-                    logger.info('Best RMSE found on epoch {}'.format(epoch))
-                val_loss = loss
-                       
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                early_stopping_counter = 0  
-            else:
-                early_stopping_counter += 1
-                if early_stopping_counter >= early_stopping_patience:
-                    logger.info("Early stopping at epoch {}.".format(epoch))
-                    break
-            logger.info("-----------------------------------------")
-
-    # Test
-    li = train_args.log.split("_")
-    prefix = li[2] + "_" + li[1] + "_#layers{}_emb{}".format(train_args.num_hidden_layers, train_args.embedding_size) + "_" + li[3]
-    train_on = li[0].replace("log/","").replace("bands3","")
-    logger.info("----------------------------------------- "+region+" 0.2 Test")
-    
-    checkpoint = torch.load(model_state_file)
-    model.load_state_dict(checkpoint['state_dict'])
-    logger.info(f"Loaded best model from epoch {checkpoint['epoch']} with RMSE {checkpoint['rmse']:.4f}")
-    
-    model.eval()
-    for it, (input_nodes, output_nodes, blocks) in enumerate(test_dataloader):
-        with torch.no_grad():
-            origin_test_nids = output_nodes.cpu()[np.isin(output_nodes.cpu(), test_nids)]
-            condition1 = np.isin(odflows[:, 0], origin_test_nids)
-            condition2 = np.isin(odflows[:, 1], output_nodes.cpu())
-            combined_condition = condition1 & condition2
-            trip_od_test = torch.from_numpy(odflows[combined_condition][:, :2].astype(np.int64)).to(device)
-            trip_volume_test = torch.from_numpy(odflows[combined_condition][:, -1].astype(float)).to(device)
-            log_trip_volume_test = utils.log_transform(trip_volume_test)
-
-            loss = model.get_loss(output_nodes, trip_od_test, log_trip_volume_test, blocks)
-        rmse, mae, cpc= utils.evaluateOutput(model, blocks, trip_od_test, trip_volume_test, output_nodes, region, prefix, train_on+"_0.2")
-        
-        logger.info("-----------------------------------------")
-        logger.info(f'Epoch: {epoch:04d} - Test - Loss: {loss:.4f} | '
-                 f'RMSE: {rmse:.4f} - MAE: {mae:.4f} - CPC: {cpc:.4f}')
-        
-class AverageMeter(object):
-    def __init__(self):
-        self.reset()
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
+            val_rmse, val_mae, val_cpc = 0, 0, 0
+            count = 0
+            
+            with torch.no_grad():
+                for it, (input_nodes, output_nodes, blocks) in enumerate(valid_dataloader):
+                    mask_v = np.isin(odflows[:, 0], output_nodes.cpu()) & np.isin(odflows[:, 1], g.nodes().cpu())
+                    if not mask_v.any(): continue
+                    
+                    trip_od_v = torch.from_numpy(odflows[mask_v][:, :2].astype(np.int64)).to(device)
+                    trip_vol_v = torch.from_numpy(odflows[mask_v][:, 2].astype(float)).to(device)
+                    
+                    rmse, mae, cpc = utils.evaluateOne(model, blocks, trip_od_v, trip_vol_v, output_nodes, region=region)
+                    val_rmse += rmse; val_mae += mae; val_cpc += cpc; count += 1
+            
+            avg_rmse = val_rmse / count
+            logger.info(f"Epoch {epoch:03d} | Loss: {total_loss:.4f} | Val RMSE: {avg_rmse:.4f} | MAE: {val_mae/count:.4f} | CPC: {val_cpc/count:.4f}")
+            
+            if avg_rmse < best_rmse:
+                best_rmse = avg_rmse
+                torch.save(model.state_dict(), f'../ckpt/{region}_dsgnn_best.pth')
+                logger.info(">>> 发现更优模型，已保存。")
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    os.makedirs(os.path.dirname(args.log), exist_ok=True)
     
-    logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S',
-                    handlers=[logging.FileHandler(args.log, mode='a'), logging.StreamHandler()])
-    logger = logging.getLogger('#layers {}, emb {}'.format(args.num_hidden_layers, args.embedding_size))
-    logger.setLevel(logging.DEBUG)
+    log_dir = os.path.dirname(args.log) if '/' in args.log else 'log'
+    if not os.path.exists(log_dir): os.makedirs(log_dir)
     
-    # 仅运行 GNN 训练 (融合了 POI 势阱)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[logging.FileHandler(args.log), logging.StreamHandler()]
+    )
+    logger = logging.getLogger(__name__)
+    
     train(args, logger)

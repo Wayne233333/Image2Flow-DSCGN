@@ -13,13 +13,12 @@ shp_path = os.path.join(config.DATA_DIR, config.REGION, "shapefile", f"tl_{confi
 output_csv = os.path.join(config.DATA_DIR, config.REGION, "POI", f"{config.REGION}_POI.csv")
 
 def process_and_aggregate_poi():
-    target_tags = ['amenity', 'shop', 'building', 'highway', 'railway', 'tourism', 'leisure', 'office', 'industrial']
+    target_tags = ['amenity', 'shop']
     
     # 1. 加载普查区 Shapefile
     print("正在加载普查区 Shapefile...")
     census_gdf = gpd.read_file(shp_path)
     
-    # 识别 ID 字段
     id_field = 'GEOID' 
     if id_field not in census_gdf.columns:
         possible_ids = ['GEOID20', 'GEOID10', 'AFFGEOID', 'TRACTCE']
@@ -29,8 +28,6 @@ def process_and_aggregate_poi():
                 break
     print(f"使用字段 '{id_field}' 作为普查区唯一标识。")
 
-    # 【新增逻辑】计算面积特征
-    # 将坐标系临时转为 Web Mercator (EPSG:3857) 以计算平方米，然后转为平方公里
     print("正在计算普查区面积...")
     census_gdf['area'] = census_gdf.to_crs(epsg=3857).area / 10**6 
 
@@ -77,22 +74,21 @@ def process_and_aggregate_poi():
     print("正在进行空间关联...")
     joined = gpd.sjoin(poi_gdf, census_gdf[[id_field, 'geometry']], predicate='within', how='inner')
     
-    # 统计有 POI 的区域
     poi_stats = joined.groupby(id_field)[target_tags].sum().reset_index()
 
     # 5. 合并回原始普查区列表（保留面积和所有区域）
     print("正在合并所有数据并生成最终 CSV...")
-    # 注意：这里我们保留了 id_field 和 area 两列
     all_tracts = census_gdf[[id_field, 'area']].copy()
     final_df = pd.merge(all_tracts, poi_stats, on=id_field, how='left')
     
-    # 填充缺失值为 0
     final_df[target_tags] = final_df[target_tags].fillna(0).astype(int)
     
-    # 重命名 ID 列为 geocode 以适配后续脚本
     final_df.rename(columns={id_field: 'geocode'}, inplace=True)
 
-    print(f"处理完成。总普查区数: {len(final_df)}，面积列已添加。")
+    keep_cols = ['geocode', 'area', 'amenity', 'shop']
+    final_df = final_df[keep_cols]
+
+    print(f"处理完成。总普查区数: {len(final_df)}")
     final_df.to_csv(output_csv, index=False)
     print(f"结果已保存至: {output_csv}")
 

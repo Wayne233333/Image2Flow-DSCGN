@@ -21,8 +21,7 @@ def load_nids_dataset(node_feats_path='../data/Vis/default.csv', year=2020, fpre
     all_nids = pd.read_csv(f'{nid_dir}all_nids_{region_prefix}.csv', dtype={'geocode': 'string'})
     
     # 2. 加载 ID 映射表
-    actual_mappath = mappath.replace(".csv", f"_{region_prefix}.csv") if not os.path.exists(mappath) else mappath
-    mapping_table = pd.read_csv(actual_mappath, dtype={'geocode': 'string'})
+    mapping_table = pd.read_csv(mappath, dtype={'geocode': 'string'})
 
     # 3. 加载 OD 流量并转换 ID
     flow_dir = '../data/LODES/'

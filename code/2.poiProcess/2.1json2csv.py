@@ -13,7 +13,7 @@ shp_path = os.path.join(config.DATA_DIR, config.REGION, "shapefile", f"tl_{confi
 output_csv = os.path.join(config.DATA_DIR, config.REGION, "POI", f"{config.REGION}_POI.csv")
 
 def process_and_aggregate_poi():
-    target_tags = ['amenity', 'shop']
+    target_tags = ['amenity', 'shop', 'highway', 'tourism', 'leisure', 'office']
     
     # 1. 加载普查区 Shapefile
     print("正在加载普查区 Shapefile...")
@@ -85,7 +85,7 @@ def process_and_aggregate_poi():
     
     final_df.rename(columns={id_field: 'geocode'}, inplace=True)
 
-    keep_cols = ['geocode', 'area', 'amenity', 'shop']
+    keep_cols = ['geocode', 'area'] + target_tags
     final_df = final_df[keep_cols]
 
     print(f"处理完成。总普查区数: {len(final_df)}")

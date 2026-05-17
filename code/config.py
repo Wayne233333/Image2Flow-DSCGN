@@ -5,8 +5,8 @@ import os
 DATA_DIR = os.path.join("..", "..", "data")
 
 # --- 区域设置 ---
-REGION = "LA"
-MODEL = "NY"
+REGION = "DETROIT"
+MODEL = "DETROIT"
 YEAR = "2020"
 
 # --- 划分参数 ---

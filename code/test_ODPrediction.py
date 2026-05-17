@@ -9,10 +9,11 @@ import dgl
 import pickle
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import argparse
+import os
 parser = argparse.ArgumentParser()
-parser.add_argument('--log', type=str, default='log/default.log') # model state of city A 
-parser.add_argument('--node_feats_path', type=str, default='../data/Vis/train_on_M1bands3/M1bands3_M2_l8.csv') # visual features of city B
-parser.add_argument('--region', type=str, default='M2') # city B
+parser.add_argument('--log', type=str, default='log/OD_LA.log') # model state of city A 
+parser.add_argument('--node_feats_path', type=str, default='../data/Vis/train_on_LA_2020.csv') # visual features of city B
+parser.add_argument('--region', type=str, default='LA') # city B
 parser.add_argument('--year', type=str, default='2020') 
 parser.add_argument('--device', type=str, default = 'cuda:0')
 parser.add_argument('--max_epochs', type=int, default=100)
@@ -56,12 +57,13 @@ def test(test_args):
     all_nids_od =  np.unique(np.append(all_nids, all_nids_d, axis=0))
     
     node_feats = data['node_feats']
+    potential = data['potential']
 
     ct_adj = data['weighted_adjacency']
     num_nodes = data['num_nodes']
 
     model = MyModelBlock(num_nodes, in_dim = node_feats.shape[1], h_dim = test_args.embedding_size, num_hidden_layers=test_args.num_hidden_layers, device=device)
-    g = utils.build_graph_from_matrix(ct_adj, node_feats.astype(np.float32), device)  
+    g = utils.build_graph_from_matrix(ct_adj, node_feats.astype(np.float32), potential, device)  
 
     model.to(device)
        
@@ -69,6 +71,7 @@ def test(test_args):
 
     # minibatch
     sampler = dgl.dataloading.MultiLayerFullNeighborSampler(test_args.num_hidden_layers+1)
+    # sampler = dgl.dataloading.MultiLayerNeighborSampler([200] * (test_args.num_hidden_layers + 1))
 
     test_dataloader = dgl.dataloading.DataLoader(
         g, torch.from_numpy(all_nids_od).to(device), sampler,
@@ -81,8 +84,9 @@ def test(test_args):
     # training recorder
     model_state_file = './ckpt/{}_layers{}_emb{}.pth'.format(test_args.log.strip('log/').strip('.log'),test_args.num_hidden_layers, test_args.embedding_size)
     
-    li = test_args.log.split("_")
-    prefix = li[2] + "_" + li[1] + "_#layers{}_emb{}".format(test_args.num_hidden_layers, test_args.embedding_size) + "_" + li[3] + "_y" + test_args.year
+    log_base_name = os.path.basename(test_args.log).replace(".log", "")
+    prefix = f"{log_base_name}_layers{test_args.num_hidden_layers}_emb{test_args.embedding_size}"
+    train_on = log_base_name.replace("bands3", "").replace("bands6", "")
       
     # Test:
     logger.info(f"Loading model from {model_state_file}")
@@ -95,30 +99,33 @@ def test(test_args):
             node_embedding = model(blocks).detach().cpu().numpy()
             origin_nids = output_nodes.cpu()[np.isin(output_nodes.cpu(), all_nids)]
 
-            trip_od_test = torch.from_numpy(odflows[:, :2].astype(np.int64)).to(device)
-            # scaled_dism_test = torch.from_numpy(odflows[:, 3].astype(float)).to(device)
+            # Filter OD flows: only keep flows whose origin is in all_nids AND destination is in output_nodes
+            condition1 = np.isin(odflows[:, 0], origin_nids)
+            condition2 = np.isin(odflows[:, 1], output_nodes.cpu())
+            combined_condition = condition1 & condition2
 
-            trip_volume_test = torch.from_numpy(odflows[:, 2].astype(float)).to(device)
+            trip_od_test = torch.from_numpy(odflows[combined_condition][:, :2].astype(np.int64)).to(device)
+
+            trip_volume_test = torch.from_numpy(odflows[combined_condition][:, 2].astype(float)).to(device)
             log_trip_volume_test = utils.log_transform(trip_volume_test)
 
-            # loss = model.get_loss(output_nodes, trip_od_test, log_trip_volume_test, blocks)
-
-        rmse, mae, cpc = utils.evaluateOutput(model, blocks, trip_od_test, trip_volume_test, output_nodes, region, prefix, data['train_on'])
+        rmse, mae, cpc = utils.evaluateOutput(model, blocks, trip_od_test, trip_volume_test, output_nodes, region, prefix, train_on)
         
         logger.info("-----------------------------------------")
         logger.info(f'Test | Bilinear Decoder '
                  f'RMSE: {rmse:.4f} - MAE: {mae:.4f} - '
                  f'CPC: {cpc:.4f}')
 
+    # LGBM section: use the same filtered OD flows for consistency
     indices_o = [torch.where(output_nodes == b)[0] for b in trip_od_test[:,0]]
     flattened_o = torch.cat(indices_o).cpu().numpy()
     indices_d = [torch.where(output_nodes == b)[0] for b in trip_od_test[:,1]]
     flattened_d = torch.cat(indices_d).cpu().numpy()
-    scaled_dism_test = odflows[:, 3]
+    scaled_dism_test = odflows[combined_condition][:, 3]
     # construct edge feature
 
     X_test = np.concatenate([node_embedding[flattened_o], node_embedding[flattened_d],scaled_dism_test.reshape(-1,1)], axis=1)
-    y_test = odflows[:, 2]
+    y_test = odflows[combined_condition][:, 2]
 
     with open('./models/lgbm_{}.txt'.format(args.log.strip('log/').strip('.log')), 'rb') as file:
         gbm = pickle.load(file)
